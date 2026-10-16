@@ -10,6 +10,17 @@ pub struct TenantService {
 }
 
 impl TenantService {
+    /// 宿主在发布路由前验证本代连接池可用，表结构由身份插件先行初始化。
+    pub async fn initialize(&self) -> Result<()> {
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// 宿主停止本代服务时释放连接池，租户与成员关系仍保存在数据库。
+    pub async fn shutdown(&self) {
+        self.pool.close().await;
+    }
+
     pub fn from_env() -> Result<Self> {
         let database_url = env::var("AIO_DATABASE_URL")
             .or_else(|_| env::var("AZ_AIO_DATABASE_URL"))
