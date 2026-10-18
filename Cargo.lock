@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "az-plugin-contract"
 version = "2026.5.10"
-source = "git+https://github.com/org-aio/aio-platform.git?rev=d494f470069c45ecfab00625745214889028c038#d494f470069c45ecfab00625745214889028c038"
+source = "git+https://github.com/org-aio/aio-platform.git?rev=0325d0c699b49a8c046d472e5c86e392e5bef348#0325d0c699b49a8c046d472e5c86e392e5bef348"
 dependencies = [
  "anyhow",
  "serde",
@@ -187,7 +187,7 @@ dependencies = [
 [[package]]
 name = "az-plugin-process"
 version = "2026.5.10"
-source = "git+https://github.com/org-aio/aio-platform.git?rev=d494f470069c45ecfab00625745214889028c038#d494f470069c45ecfab00625745214889028c038"
+source = "git+https://github.com/org-aio/aio-platform.git?rev=0325d0c699b49a8c046d472e5c86e392e5bef348#0325d0c699b49a8c046d472e5c86e392e5bef348"
 dependencies = [
  "anyhow",
  "axum",
@@ -2233,7 +2233,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
