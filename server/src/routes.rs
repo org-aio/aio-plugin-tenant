@@ -1,154 +1,136 @@
-use std::sync::Arc;
+//! 租户 HTTP 入口：身份和权限由宿主注入，写操作仍会经过宿主身份服务复核。
 
-use aio_plugin_identity_server::{IdentityService, SessionContext};
 use aio_plugin_tenant_model::{
-    CreateTenantRequest, SwitchTenantRequest, TenantErrorResponse, TenantItem, TenantResponse,
+    CreateTenantRequest, SwitchTenantRequest, TenantErrorResponse, TenantItem, TenantListing,
+    TenantResponse, TenantSession,
 };
 use axum::{
-    Json, Router,
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    Extension, Json, Router,
+    extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
+use az_plugin_process::{Caller, IdentityService};
+use std::sync::Arc;
 
-use crate::TenantService;
+type Service = Arc<IdentityService>;
 
-#[derive(Clone)]
-struct TenantState {
-    tenants: Arc<TenantService>,
-    identity: Arc<IdentityService>,
-}
-
-pub fn router(tenants: Arc<TenantService>, identity: Arc<IdentityService>) -> Router {
+pub fn router(identity: Service) -> Router {
     Router::new()
-        .route("/api/plugins/tenant/health", get(health))
-        .route("/api/tenants", get(list).post(create))
-        .route("/api/tenants/switch", post(switch))
-        .route("/api/tenants/{id}", put(rename))
-        .with_state(TenantState { tenants, identity })
-}
-
-async fn health() -> &'static str {
-    "ok"
+        .route("/tenants", get(list).post(create))
+        .route("/tenants/switch", post(switch))
+        .route("/tenants/current", put(rename))
+        .with_state(identity)
 }
 
 async fn list(
-    State(state): State<TenantState>,
-    headers: HeaderMap,
-) -> Result<Json<TenantResponse<Vec<TenantItem>>>, TenantHttpError> {
-    let session = authenticate(&state, &headers).await?;
+    State(identity): State<Service>,
+    Extension(caller): Extension<Caller>,
+) -> Result<Json<TenantResponse<TenantListing>>, TenantError> {
+    let tenants = identity
+        .list_tenants(&caller.context_id)
+        .await
+        .map_err(TenantError::from_identity)?;
     Ok(Json(TenantResponse {
-        data: state
-            .tenants
-            .list(&session.user_id, &session.tenant_id)
-            .await?,
+        data: TenantListing {
+            tenants: tenants
+                .into_iter()
+                .map(|tenant| TenantItem {
+                    id: tenant.id,
+                    label: tenant.label,
+                    current: tenant.current,
+                })
+                .collect(),
+            can_manage: caller.has_permission("tenant:manage"),
+        },
     }))
 }
 
 async fn create(
-    State(state): State<TenantState>,
-    headers: HeaderMap,
+    State(identity): State<Service>,
+    Extension(caller): Extension<Caller>,
     Json(request): Json<CreateTenantRequest>,
-) -> Result<Json<TenantResponse<TenantItem>>, TenantHttpError> {
-    let session = authenticate(&state, &headers).await?;
-    require(&session, "tenant:manage")?;
+) -> Result<Json<TenantResponse<TenantItem>>, TenantError> {
+    require_tenant_manage(&caller)?;
+    let tenant = identity
+        .create_tenant(&caller.context_id, &request.label)
+        .await
+        .map_err(TenantError::from_identity)?;
     Ok(Json(TenantResponse {
-        data: state
-            .tenants
-            .create(&session.user_id, &request.label)
-            .await?,
+        data: TenantItem {
+            id: tenant.id,
+            label: tenant.label,
+            current: tenant.current,
+        },
     }))
 }
 
 async fn rename(
-    State(state): State<TenantState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
+    State(identity): State<Service>,
+    Extension(caller): Extension<Caller>,
     Json(request): Json<CreateTenantRequest>,
-) -> Result<StatusCode, TenantHttpError> {
-    let session = authenticate(&state, &headers).await?;
-    require(&session, "tenant:manage")?;
-    if id != session.tenant_id {
-        return Err(TenantHttpError::forbidden("请先切换到目标租户再修改名称"));
-    }
-    state.tenants.rename(&id, &request.label).await?;
+) -> Result<StatusCode, TenantError> {
+    require_tenant_manage(&caller)?;
+    identity
+        .rename_current_tenant(&caller.context_id, &request.label)
+        .await
+        .map_err(TenantError::from_identity)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn switch(
-    State(state): State<TenantState>,
-    headers: HeaderMap,
+    State(identity): State<Service>,
+    Extension(caller): Extension<Caller>,
     Json(request): Json<SwitchTenantRequest>,
-) -> Result<StatusCode, TenantHttpError> {
-    let session = authenticate(&state, &headers).await?;
-    if !state
-        .identity
-        .switch_tenant(&session, &request.tenant_id)
-        .await?
-    {
-        return Err(TenantHttpError::forbidden("当前账号不属于目标租户"));
-    }
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Json<TenantResponse<TenantSession>>, TenantError> {
+    let session = identity
+        .switch_tenant(&caller.context_id, &request.tenant_id)
+        .await
+        .map_err(TenantError::from_identity)?;
+    Ok(Json(TenantResponse {
+        data: TenantSession {
+            tenant_id: session.tenant_id,
+            tenant_label: session.tenant_label,
+            permissions: session.permissions,
+        },
+    }))
 }
 
-async fn authenticate(
-    state: &TenantState,
-    headers: &HeaderMap,
-) -> Result<SessionContext, TenantHttpError> {
-    state
-        .identity
-        .authenticate(headers)
-        .await?
-        .ok_or_else(|| TenantHttpError::unauthorized("会话无效或已过期"))
-}
-
-fn require(session: &SessionContext, permission: &str) -> Result<(), TenantHttpError> {
-    if session
-        .permissions
-        .iter()
-        .any(|candidate| candidate == permission)
-    {
+fn require_tenant_manage(caller: &Caller) -> Result<(), TenantError> {
+    if caller.has_permission("tenant:manage") {
         Ok(())
     } else {
-        Err(TenantHttpError::forbidden("当前角色没有租户管理权限"))
+        Err(TenantError::forbidden("当前角色没有租户管理权限"))
     }
 }
 
-struct TenantHttpError {
+struct TenantError {
     status: StatusCode,
     message: String,
 }
 
-impl TenantHttpError {
-    fn unauthorized(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            message: message.into(),
-        }
-    }
-
+impl TenantError {
     fn forbidden(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
         }
     }
-}
 
-impl<E> From<E> for TenantHttpError
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(value: E) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            message: format!("{:#}", value.into()),
-        }
+    /// 身份服务的失败大多来自业务校验；权限与成员关系保留 403 语义。
+    fn from_identity(error: anyhow::Error) -> Self {
+        let message = format!("{error:#}");
+        let status = if message.contains("权限") || message.contains("不属于") {
+            StatusCode::FORBIDDEN
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        Self { status, message }
     }
 }
 
-impl IntoResponse for TenantHttpError {
+impl IntoResponse for TenantError {
     fn into_response(self) -> Response {
         (
             self.status,

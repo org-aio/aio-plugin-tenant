@@ -1,0 +1,6 @@
+{
+  "name": "aio-plugin-tenant",
+  "private": true,
+  "scripts": { "test:ui": "node tests/browser/tenant.cjs" },
+  "devDependencies": { "playwright": "1.62.0" }
+}

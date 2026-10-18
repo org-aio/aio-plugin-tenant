@@ -14,7 +14,7 @@ use dioxus::prelude::*;
 use dioxus_icons::lucide::{LogIn, Pencil, Plus, RefreshCw};
 
 #[allow(non_snake_case)]
-pub(super) fn TenantPage() -> Element {
+pub fn TenantPage() -> Element {
     let mut revision = use_signal(|| 0_u64);
     let resource = use_resource(move || {
         let _ = revision();
@@ -23,13 +23,15 @@ pub(super) fn TenantPage() -> Element {
     let mut editor = use_signal(|| None::<Option<TenantItem>>);
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
-    let (tenants, can_manage) = match resource.read().as_ref().cloned() {
+    let listing = match resource.read().as_ref().cloned() {
         Some(Ok(value)) => value,
         Some(Err(error)) => {
             return rsx! { PageSurface { RequestState { error, on_retry: move |_| revision += 1 } } };
         }
         None => return rsx! { PageSurface { RequestState {} } },
     };
+    let can_manage = listing.can_manage;
+    let tenants = listing.tenants;
     rsx! {
         PageSurface {
             PageHeader { title: "租户管理", detail: format!("已加入 {} 个租户", tenants.len()),
@@ -48,7 +50,9 @@ pub(super) fn TenantPage() -> Element {
                         if tenant.current && can_manage { Button { variant: ButtonVariant::Ghost, size: ButtonSize::IconSm, title: "重命名租户", aria_label: "重命名租户", onclick: move |_| editor.set(Some(Some(tenant.clone()))), Pencil {} } }
                         else if !tenant.current { Button { variant: ButtonVariant::Outline, disabled: busy(), aria_label: "切换到 {tenant.label}", onclick: move |_| {
                             if busy() { return; } busy.set(true); error.set(None); let id = tenant.id.clone();
-                            spawn(async move { if let Err(message) = http::switch(id).await { error.set(Some(message)); } busy.set(false); });
+                            spawn(async move {
+                                if let Err(message) = http::switch(id).await { error.set(Some(message)); busy.set(false); }
+                            });
                         }, LogIn {} "切换" } }
                     } }, _ => rsx! {},
                 } },

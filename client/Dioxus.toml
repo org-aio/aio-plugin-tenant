@@ -1,0 +1,7 @@
+[application]
+name = "aio-plugin-tenant-client"
+default_platform = "web"
+
+[web.app]
+title = "租户管理"
+base_path = "."

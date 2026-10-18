@@ -1,8 +1,23 @@
-[plugin.client]
-path = "client"
+schema_version = 2
 
-[plugin.server]
-path = "server"
+[plugin]
+required_permissions = []
 
-[plugin.dependencies]
-identity = ">=0.1.0"
+[plugin.marketplace]
+title = "租户管理"
+summary = "独立交付的租户目录、切换、创建与重命名，身份与会话仍由宿主管理。"
+license = "MIT"
+tags = ["system", "tenant", "identity"]
+
+[plugin.runtime]
+artifact = "dist/tenant-server"
+host_version = ">=2026.10.18"
+
+[plugin.runtime.process]
+image = "sha256:48a661b5e5f4560287dfc254e948825538d0f7a1379616495a424ed375afd31f"
+
+[plugin.frontend]
+path = "dist/frontend"
+
+[plugin.capabilities]
+tenant_provider = true
